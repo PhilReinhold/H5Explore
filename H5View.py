@@ -186,10 +186,10 @@ class SearchableH5View(QtGui.QWidget):
         match_model.set_match_term("")
         self.tree_view = H5View()
         self.tree_view.setModel(match_model)
-        search_box = QtGui.QLineEdit()
         layout.addWidget(self.tree_view)
-        layout.addWidget(search_box)
-        search_box.textChanged.connect(match_model.set_match_term)
+        self.search_box = QtGui.QLineEdit()
+        layout.addWidget(self.search_box)
+        self.search_box.textChanged.connect(match_model.set_match_term)
 
 class H5Plotter(QtGui.QMainWindow):
     def __init__(self, file):
@@ -207,6 +207,20 @@ class H5Plotter(QtGui.QMainWindow):
         self.layout.addWidget(self.dock_area)
         self.layout.setStretchFactor(0, 0)
         self.layout.setStretchFactor(1, 1)
+
+        QtGui.QShortcut(QtGui.QKeySequence(Qt.CTRL | Qt.Key_N), self,
+                        lambda: self.move_view_cursor(QtGui.QAbstractItemView.MoveDown))
+        QtGui.QShortcut(QtGui.QKeySequence(Qt.CTRL | Qt.Key_P), self,
+                        lambda: self.move_view_cursor(QtGui.QAbstractItemView.MoveUp))
+        QtGui.QShortcut(QtGui.QKeySequence(Qt.CTRL | Qt.Key_F), self,
+                        lambda: self.move_view_cursor(QtGui.QAbstractItemView.MoveRight))
+        QtGui.QShortcut(QtGui.QKeySequence(Qt.CTRL | Qt.Key_B), self,
+                        lambda: self.move_view_cursor(QtGui.QAbstractItemView.MoveLeft))
+        QtGui.QShortcut(QtGui.QKeySequence(Qt.CTRL | Qt.Key_S), self, view_box.search_box.setFocus)
+
+    def move_view_cursor(self, cursor_action):
+        self.view.setFocus(Qt.OtherFocusReason)
+        self.view.setCurrentIndex(self.view.moveCursor(cursor_action, Qt.NoModifier))
 
 
     def load_plot(self, index):
