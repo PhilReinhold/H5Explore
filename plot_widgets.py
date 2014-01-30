@@ -1,4 +1,4 @@
-from PyQt4 import QtGui
+from PyQt4 import QtGui, QtCore
 import warnings
 import pyqtgraph as pg
 import numpy as np
@@ -237,3 +237,20 @@ class CrossSectionDock(CloseableDock):
         self.v_cross_section_widget_data.setData(ydata, self.imageItem.image[self.x_cross_index, :])
         self.v_cross_section_widget.v_line.setPos(ydata[self.y_cross_index])
         self.v_cross_section_widget.h_line.setPos(zval)
+
+class MoviePlotDock(CrossSectionDock):
+    def __init__(self, array, *args, **kwargs):
+        super(MoviePlotDock, self).__init__(*args, **kwargs)
+        self.setImage(array)
+        self.tpts = len(array)
+        play_button = QtGui.QPushButton("Play")
+        self.addWidget(play_button)
+        self.play_timer = QtCore.QTimer()
+        self.play_timer.setInterval(50)
+        self.play_timer.timeout.connect(self.increment)
+        play_button.clicked.connect(self.play_timer.start)
+
+    def increment(self):
+        self.img_view.setCurrentIndex((self.img_view.currentIndex + 1) % self.tpts)
+
+
