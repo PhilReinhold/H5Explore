@@ -29,11 +29,13 @@ class H5File(QtGui.QStandardItemModel):
         self.file.close()
         self.set_file(h5py.File(filename))
 
+
 def h5_dispatch(item):
     if isinstance(item, h5py.Group):
         return H5ItemName(item)
     else:
         return H5DatasetRow(item).columns
+
 
 class H5Item(QtGui.QStandardItem):
     def __init__(self, group, row=None, text=""):
@@ -44,15 +46,14 @@ class H5Item(QtGui.QStandardItem):
         self.name = group.name.split('/')[-1]
 
         for k in group.attrs.keys():
+            if k in ('DIMENSION_SCALE', 'DIMENSION_LIST', 'CLASS', 'NAME', 'REFERENCE_LIST'):
+                # These are set by h5py for axis handling
+                continue
             self.appendRow(H5AttrRow(k, group).columns)
 
         if isinstance(group, h5py.Group):
             for k in group.keys():
                 items = h5_dispatch(group[k])
-                try:
-                    print [(i.name, i.text()) for i in items]
-                except:
-                    print i.name, i.text()
                 self.appendRow(items)
 
     def data(self, role):
@@ -93,6 +94,7 @@ class H5ItemName(H5Item):
     def flags(self):
         return Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable
 
+
 class H5DatasetRow(object):
     def __init__(self, dataset):
         self.name = H5ItemName(dataset, self)
@@ -100,6 +102,7 @@ class H5DatasetRow(object):
         self.shape.setEditable(False)
         self.plot = None
         self.columns = [self.name, self.shape]
+
 
 class H5AttrItem(QtGui.QStandardItem):
     def __init__(self, key, group, row, text=""):
@@ -119,6 +122,7 @@ class H5AttrItem(QtGui.QStandardItem):
     def flags(self):
         return Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable
 
+
 class H5AttrKey(H5AttrItem):
     def __init__(self, key, group, row):
         super(H5AttrKey, self).__init__(key, group, row, text=str(key))
@@ -130,6 +134,7 @@ class H5AttrKey(H5AttrItem):
         del self.group.attrs[self.key]
         self.key = str(value.toString())
         self.group.attrs[self.key] = attr_val
+
 
 class H5AttrValue(H5AttrItem):
     def __init__(self, key, group, row):
@@ -148,11 +153,13 @@ class H5AttrValue(H5AttrItem):
             v = str(value.toString())
         self.group.attrs[self.key] = v
 
+
 class H5AttrRow(object):
     def __init__(self, key, dataset):
         self.name = H5AttrKey(key, dataset, self)
         self.value = H5AttrValue(key, dataset, self)
         self.columns = [self.name, self.value]
+
 
 class H5View(QtGui.QTreeView):
     def __init__(self):
@@ -180,7 +187,7 @@ class RecursiveFilterModel(QtGui.QSortFilterProxyModel):
 
     def set_match_term(self, term_string):
         # Match all words
-        matches = [ set(self.get_matches(t)) for t in str(term_string).split() ]
+        matches = [set(self.get_matches(t)) for t in str(term_string).split()]
         m0 = set(self.get_matches(""))
         self.matching_items = m0.intersection(*matches)
 
@@ -208,6 +215,7 @@ class RecursiveFilterModel(QtGui.QSortFilterProxyModel):
             this_item = self.sourceModel().itemFromIndex(this_index)
         return this_item in self.matching_items
 
+
 class SearchableH5View(QtGui.QWidget):
     def __init__(self, model):
         super(SearchableH5View, self).__init__()
@@ -221,6 +229,7 @@ class SearchableH5View(QtGui.QWidget):
         self.search_box = QtGui.QLineEdit()
         layout.addWidget(self.search_box)
         self.search_box.textChanged.connect(match_model.set_match_term)
+
 
 class H5Plotter(QtGui.QMainWindow):
     def __init__(self, file):
@@ -259,13 +268,26 @@ class H5Plotter(QtGui.QMainWindow):
         source_index = self.match_model.mapToSource(index)
         item = self.model.itemFromIndex(source_index)
         if isinstance(item.row, H5DatasetRow) and item.row.plot is None:
-            dock = self.make_dock(item.name, item.group[:])
+            labels = []
+            axes = []
+            for d in item.group.dims:
+                try:
+                    label, ds = d.items()[0]
+                    labels.append(label)
+                    axes.append(ds[:])
+                except IndexError:
+                    print 'Could not find axis in item', item
+                    labels.append('')
+                    axes.append(None)
+
+            dock = self.make_dock(item.name, item.group[:], labels, axes)
             self.dock_area.addDock(dock)
             item.plot = dock
             dock.closeClicked.connect(lambda: item.__setattr__('plot', None))
 
-    def make_dock(self, name, array):
+    def make_dock(self, name, array, labels=None, axes=None):
         'returns a dockable plot widget'
+        labels = {pos: l for l, pos in zip(labels, ('bottom', 'left'))}
         if len(array.shape) == 3:
             d = MoviePlotDock(array, name=name, area=self.dock_area)
 
@@ -274,12 +296,15 @@ class H5Plotter(QtGui.QMainWindow):
             d.setImage(array)
 
         if len(array.shape) == 1:
-            w = CrosshairPlotWidget()
-            w.plot(array)
+            w = CrosshairPlotWidget(labels=labels)
+            if axes and axes[0] is not None:
+                w.plot(axes[0], array)
+            else:
+                w.plot(array)
             d = CloseableDock(name=name, widget=w, area=self.dock_area)
 
-
         return d
+
 
 def main(fn):
     with h5py.File(fn) as f:
@@ -291,32 +316,37 @@ def main(fn):
         app.exec_()
     sys.exit()
 
+
 def test():
     import numpy as np
+
     test_fn = "test.h5"
     test_f = h5py.File(test_fn, 'w')
-#    app = QtGui.QApplication([])
-#    win = H5Plotter(test_f)
-#    QtGui.QMessageBox.warning(win, "No File Specified", "No file specified, Creating test file instead.")
     A = test_f.create_group('group A')
     B = test_f.create_group('group B')
     C = test_f.create_group('group C')
     B['Simple Data'] = range(25)
     xs, ys = np.mgrid[-25:25, -25:25]
-    rs = np.sqrt(xs**2 + ys**2)
+    rs = np.sqrt(xs ** 2 + ys ** 2)
     C['Image Data'] = np.sinc(rs)
     C['R Values'] = rs
     A.attrs['words'] = 'bonobo bonanza'
     A.attrs['number'] = 42
     C['Image Data'].attrs['dataset attr'] = 15.5
     ts, xs, ys = np.mgrid[0:100, -50:50, -50:50]
-    rs = np.sqrt(xs**2 + ys**2)
-    C['Movie Data'] = np.sinc(rs-ts) * np.exp(-ts/100)
+    rs = np.sqrt(xs ** 2 + ys ** 2)
+    C['Movie Data'] = np.sinc(rs - ts) * np.exp(-ts / 100)
 
+    xs = A['xs'] = np.linspace(0, 10, 300)
+    A['sin(xs)'] = np.sin(xs)
+    A['sin(xs)'].dims.create_scale(A['xs'], "The X Axis Label")
+    A['sin(xs)'].dims[0].attach_scale(A['xs'])
     main(test_fn)
+
 
 if __name__ == "__main__":
     import sys
+
     try:
         main(sys.argv[1])
     except IndexError:
