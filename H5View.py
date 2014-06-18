@@ -1,5 +1,6 @@
 from PyQt4 import QtGui, QtCore
 from PyQt4.Qt import Qt
+from PyQt4.QtGui import QCheckBox
 import h5py
 import sys
 from pyqtgraph import ImageView
@@ -103,7 +104,6 @@ class H5DatasetRow(object):
         self.plot = None
         self.columns = [self.name, self.shape]
 
-
 class H5AttrItem(QtGui.QStandardItem):
     def __init__(self, key, group, row, text=""):
         super(H5AttrItem, self).__init__(text)
@@ -166,24 +166,26 @@ class H5View(QtGui.QTreeView):
         super(H5View, self).__init__()
         self.resizeColumnToContents(0)
         self.setContextMenuPolicy(Qt.ActionsContextMenu)
+        self.setSelectionMode(QtGui.QAbstractItemView.MultiSelection)
         expand_action = QtGui.QAction("Expand", self)
         expand_action.triggered.connect(self.expandAll)
-        expand_action.triggered.connect(lambda: self.resizeColumnToContents(0))
         self.addAction(expand_action)
 
         collapse_action = QtGui.QAction("Collapse", self)
         collapse_action.triggered.connect(self.collapseAll)
-        collapse_action.triggered.connect(lambda: self.resizeColumnToContents(0))
         self.addAction(collapse_action)
-
-        self.contextMenuPolicy()
 
 
 class RecursiveFilterModel(QtGui.QSortFilterProxyModel):
+    attrs_visible = True
     def get_matches(self, t):
         items = self.sourceModel().findItems("", Qt.MatchContains | Qt.MatchRecursive)
         return [i for i in items if t in i.fullname]
         #return self.sourceModel().findItems(t, Qt.MatchContains | Qt.MatchRecursive)
+
+    def toggle_attrs_visible(self):
+        self.attrs_visible = not self.attrs_visible
+        self.invalidateFilter()
 
     def set_match_term(self, term_string):
         # Match all words
@@ -210,11 +212,12 @@ class RecursiveFilterModel(QtGui.QSortFilterProxyModel):
         this_parent = self.sourceModel().itemFromIndex(src_parent_index)
         if this_parent:
             this_item = this_parent.child(src_i)
+            if not self.attrs_visible and isinstance(this_item, H5AttrItem):
+                return False
         else:
             this_index = self.sourceModel().index(src_i, 0)
             this_item = self.sourceModel().itemFromIndex(this_index)
         return this_item in self.matching_items
-
 
 class SearchableH5View(QtGui.QWidget):
     def __init__(self, model):
@@ -223,8 +226,12 @@ class SearchableH5View(QtGui.QWidget):
         match_model = RecursiveFilterModel()
         match_model.setSourceModel(model)
         match_model.set_match_term("")
+        self.attrs_visible_check = QCheckBox("Attributes Visible")
+        self.attrs_visible_check.setChecked(True)
         self.tree_view = H5View()
+        self.attrs_visible_check.toggled.connect(match_model.toggle_attrs_visible)
         self.tree_view.setModel(match_model)
+        layout.addWidget(self.attrs_visible_check)
         layout.addWidget(self.tree_view)
         self.search_box = QtGui.QLineEdit()
         layout.addWidget(self.search_box)

@@ -102,6 +102,11 @@ class CrossSectionDock(CloseableDock):
         self.search_mode = False
         self.signals_connected = False
         self.set_histogram(False)
+        histogram_action = QtGui.QAction('Histogram', self)
+        histogram_action.setCheckable(True)
+        histogram_action.triggered.connect(self.set_histogram)
+        self.img_view.scene.contextMenu.append(histogram_action)
+
         self.ui.histogram.gradient.loadPreset('thermal')
         try:
             self.connect_signal()
