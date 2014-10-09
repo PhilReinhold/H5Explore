@@ -175,9 +175,18 @@ class H5View(QtGui.QTreeView):
         collapse_action.triggered.connect(self.collapseAll)
         self.addAction(collapse_action)
 
+    def selected_path(self):
+        return self.model().itemFromIndex(self.selectedIndexes()[0]).fullname
+
 
 class RecursiveFilterModel(QtGui.QSortFilterProxyModel):
     attrs_visible = True
+    term_string = ""
+
+    def setSourceModel(self, model):
+        super(RecursiveFilterModel, self).setSourceModel(model)
+        model.modelReset.connect(self.source_model_changed)
+
     def get_matches(self, t):
         items = self.sourceModel().findItems("", Qt.MatchContains | Qt.MatchRecursive)
         return [i for i in items if t in i.fullname]
@@ -187,8 +196,12 @@ class RecursiveFilterModel(QtGui.QSortFilterProxyModel):
         self.attrs_visible = not self.attrs_visible
         self.invalidateFilter()
 
+    def source_model_changed(self):
+        self.set_match_term(self.term_string)
+
     def set_match_term(self, term_string):
         # Match all words
+        self.term_string = term_string
         matches = [set(self.get_matches(t)) for t in str(term_string).split()]
         m0 = set(self.get_matches(""))
         self.matching_items = m0.intersection(*matches)

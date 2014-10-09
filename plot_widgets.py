@@ -31,6 +31,12 @@ class CrosshairPlotWidget(pg.PlotWidget):
         self.parametric = parametric
         self.search_mode = True
         self.label = None
+        self.selected_point = None
+
+    def set_data(self, data):
+        if data is not None and len(data) > 0:
+            self.clear()
+            self.plot(data)
 
     def toggle_search(self, mouse_event):
         if mouse_event.double():
@@ -68,6 +74,7 @@ class CrosshairPlotWidget(pg.PlotWidget):
                 return
 
             (pt_x, pt_y), _ = min(best_guesses, key=lambda x: x[1])
+            self.selected_point = (pt_x, pt_y)
             self.v_line.setPos(pt_x)
             self.h_line.setPos(pt_y)
             self.label.setText("x=%.2e, y=%.2e" % (pt_x, pt_y))
@@ -126,6 +133,9 @@ class CrossSectionDock(CloseableDock):
         self.v_cross_section_widget.add_cross_hair()
         self.v_cross_section_widget.search_mode = False
         self.v_cross_section_widget_data = self.v_cross_section_widget.plot([0,0])
+
+    def set_data(self, data):
+        self.setImage(data)
 
     def setLabels(self, xlabel="X", ylabel="Y", zlabel="Z"):
         print self.h_cross_dock.label
