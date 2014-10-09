@@ -1,3 +1,4 @@
+from collections import defaultdict
 from PyQt4 import QtGui, QtCore
 from PyQt4.Qt import Qt
 from PyQt4.QtGui import QCheckBox
@@ -5,7 +6,8 @@ import h5py
 import sys
 from pyqtgraph import ImageView
 from pyqtgraph.dockarea import DockArea
-from plot_widgets import CrosshairPlotWidget, CloseableDock, CrossSectionDock, MoviePlotDock
+from plot_widgets import CrosshairPlotWidget, CloseableDock, CrossSectionDock, MoviePlotDock, PropertyPlot
+import numpy as np
 
 from scipy.stats import futil
 from scipy.sparse.csgraph import _validation
@@ -29,6 +31,7 @@ class H5File(QtGui.QStandardItemModel):
         filename = self.file.filename
         self.file.close()
         self.set_file(h5py.File(filename))
+        self.modelReset.emit()
 
 
 def h5_dispatch(item):
@@ -39,6 +42,7 @@ def h5_dispatch(item):
 
 
 class H5Item(QtGui.QStandardItem):
+    props_dict = defaultdict(lambda: [])
     def __init__(self, group, row=None, text=""):
         super(H5Item, self).__init__(str(text))
         self.group = group
@@ -50,6 +54,9 @@ class H5Item(QtGui.QStandardItem):
             if k in ('DIMENSION_SCALE', 'DIMENSION_LIST', 'CLASS', 'NAME', 'REFERENCE_LIST'):
                 # These are set by h5py for axis handling
                 continue
+            v = group.attrs[k]
+            if isinstance(group, h5py.Dataset) and isinstance(v, (int, float)):
+                self.props_dict[k].append(self)
             self.appendRow(H5AttrRow(k, group).columns)
 
         if isinstance(group, h5py.Group):
@@ -260,6 +267,9 @@ class H5Plotter(QtGui.QMainWindow):
         self.model = self.match_model.sourceModel()
         self.dock_area = DockArea()
 
+        file_notifier = QtCore.QFileSystemWatcher([file.filename])
+        file_notifier.fileChanged.connect(lambda n: self.model.refresh)
+
         self.layout = QtGui.QSplitter(Qt.Horizontal)
         self.setCentralWidget(self.layout)
         self.view.activated.connect(self.load_plot)
@@ -267,6 +277,18 @@ class H5Plotter(QtGui.QMainWindow):
         self.layout.addWidget(self.dock_area)
         self.layout.setStretchFactor(0, 0)
         self.layout.setStretchFactor(1, 1)
+
+        plot_menu = self.menuBar().addMenu('Plot')
+        property_plot_action = QtGui.QAction('Plot Property', self.view)
+        property_plot_action.triggered.connect(self.make_property_plot)
+        #self.view.addAction(property_plot_action)
+        plot_menu.addAction(property_plot_action)
+
+        file_menu = self.menuBar().addMenu('File')
+        refresh_action = QtGui.QAction('Refresh File Contents', self.view)
+        refresh_action.triggered.connect(self.model.refresh)
+        file_menu.addAction(refresh_action)
+
 
         QtGui.QShortcut(QtGui.QKeySequence(Qt.CTRL | Qt.Key_N), self,
                         lambda: self.move_view_cursor(QtGui.QAbstractItemView.MoveDown))
@@ -281,6 +303,33 @@ class H5Plotter(QtGui.QMainWindow):
     def move_view_cursor(self, cursor_action):
         self.view.setFocus(Qt.OtherFocusReason)
         self.view.setCurrentIndex(self.view.moveCursor(cursor_action, Qt.NoModifier))
+
+    def make_property_plot(self):
+        self.property_error_msg = QtGui.QErrorMessage()
+        try:
+            indexes = filter(lambda i: i.column() == 0, self.view.selectedIndexes())
+            selected1, selected2 = [self.model.itemFromIndex(self.match_model.mapToSource(i)) for i in indexes]
+            assert isinstance(selected1, H5AttrKey)
+            assert isinstance(selected2, H5AttrKey)
+            name1 = str(selected1.text())
+            name2 = str(selected2.text())
+        except:
+            raise
+        #    self.property_error_msg.showMessage("Must select two distinct properties to plot")
+        groups = set(H5Item.props_dict[name1] + H5Item.props_dict[name2])
+        if not groups:
+            self.property_error_msg.showMessage("No groups share properties '%s' and '%s'" % (name1, name2))
+            return
+
+        try:
+            points = sorted([(float(g.group.attrs[name1]), float(g.group.attrs[name2])) for g in groups], key=lambda x: x[0])
+        except ValueError:
+            self.property_error_msg.showMessage("Cannot convert property to float") # todo: better message
+        xpts, ypts = np.transpose(points)
+        xsets = [g.group.dims[0][0][:] if g.group.dims[0] else None for g in groups]
+        ysets = [g.group[:] for g in groups]
+        items = {(x, y): (xset, yset) for x, y, xset, yset in zip(xpts, ypts, xsets, ysets)}
+        self.dock_area.addDock(PropertyPlot(items, {'bottom':name1, 'left':name2}, self.dock_area))
 
 
     def load_plot(self, index):
@@ -345,6 +394,7 @@ def test():
     A = test_f.create_group('group A')
     B = test_f.create_group('group B')
     C = test_f.create_group('group C')
+    D = test_f.create_group('Prop Group')
     B['Simple Data'] = range(25)
     xs, ys = np.mgrid[-25:25, -25:25]
     rs = np.sqrt(xs ** 2 + ys ** 2)
@@ -361,10 +411,22 @@ def test():
     A['sin(xs)'] = np.sin(xs)
     A['sin(xs)'].dims.create_scale(A['xs'], "The X Axis Label")
     A['sin(xs)'].dims[0].attach_scale(A['xs'])
+    A['sin(xs)'].attrs['prop x'] = 3
+    A['sin(xs)'].attrs['prop y'] = 7
+
+    B['Simple Data'].attrs['prop x'] = 2
+    B['Simple Data'].attrs['prop y'] = 4
+    for i, x in enumerate(range(15)):
+        data = np.random.normal(0, 1, 25)
+        D['dset %s' % i] = data
+        D['dset %s' % i].attrs['id'] = i
+        D['dset %s' % i].attrs['avg'] = np.mean(data)
+
     main(test_fn)
 
 
 if __name__ == "__main__":
+    #main(r'C:\_Data\test.h5')
     import sys
 
     try:

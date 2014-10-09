@@ -276,4 +276,57 @@ class MoviePlotDock(CrossSectionDock):
     def increment(self):
         self.img_view.setCurrentIndex((self.img_view.currentIndex + 1) % self.tpts)
 
+class LinkedPlots(CloseableDock):
+    def __init__(self, *args, **kwargs):
+        super(LinkedPlots, self).__init__(*args, **kwargs)
+        self.child_plots = []
+
+    def add_linked_plot(self, name, widget, setter):
+        dock = CloseableDock(name, widget=widget)
+        self.area.addDock(dock)
+        self.child_plots = [(widget, setter)]
+        dock.closeClicked.connect(lambda: self.child_plots.remove(widget))
+        self.closeClicked.connect(dock.close)
+
+    def update_children(self):
+        for (widget, setter) in self.child_plots:
+            widget.set_data(setter())
+#
+#class CrossSectionImagePlot(LinkedPlots):
+#    def __init__(self, *args, **kwargs):
+#        self.main_plot = pg.PlotWidget()
+#        super(CrossSectionImagePlot, self).__init__(*args, **kwargs)
+#
+#    def show_cross_section(self):
+#        self.add_linked_plot('x axis', self.get_x_trace)
+#        self.add_linked_plot('y axis', self.get_y_trace)
+#
+#    def get_x_trace(self):
+#        ix, iy = self.get_index()
+#
+#
+#class ComplexDock(LinkedPlots):
+#    pass
+
+
+class PropertyPlot(LinkedPlots):
+    def __init__(self, items, labels, area):
+        'items is dict of (x_prop, y_prop): (xdata, ydata) pairs'
+        self.plot_widget = CrosshairPlotWidget(labels=labels)
+        super(PropertyPlot, self).__init__(self, widget=self.plot_widget, area=area)
+        xpts, ypts = np.transpose(sorted(items.keys(), key=lambda x: x[0]))
+        self.plot_widget.plot(xpts, ypts)
+        self.plot_widget.scene().sigMouseMoved.connect(self.update_children)
+        self.add_linked_plot("selected point", CrosshairPlotWidget(), self.get_selected_data)
+        self.items = items
+
+    def get_selected_data(self):
+        if self.plot_widget.selected_point is None:
+            return []
+        else:
+            xpts, ypts = self.items[self.plot_widget.selected_point]
+        if xpts is None:
+            return ypts
+        else:
+            return xpts, ypts
 
