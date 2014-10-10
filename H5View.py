@@ -1,9 +1,6 @@
-from PyQt4 import QtGui, QtCore
+from PyQt4 import QtGui
 from PyQt4.Qt import Qt
-from PyQt4.QtGui import QCheckBox
 import h5py
-import sys
-from pyqtgraph import ImageView
 from pyqtgraph.dockarea import DockArea
 from plot_widgets import CrosshairPlotWidget, CloseableDock, CrossSectionDock, MoviePlotDock
 
@@ -45,11 +42,14 @@ class H5Item(QtGui.QStandardItem):
         self.row = row
         self.fullname = group.name
         self.name = group.name.split('/')[-1]
+        self.marked_junk = False
 
         for k in group.attrs.keys():
             if k in ('DIMENSION_SCALE', 'DIMENSION_LIST', 'CLASS', 'NAME', 'REFERENCE_LIST'):
                 # These are set by h5py for axis handling
                 continue
+            if k == "__JUNK__":
+                self.marked_junk = group.attrs[k]
             self.appendRow(H5AttrRow(k, group).columns)
 
         if isinstance(group, h5py.Group):
@@ -62,6 +62,12 @@ class H5Item(QtGui.QStandardItem):
             return QtGui.QBrush(QtGui.QColor(255, 0, 0, 127))
         else:
             return super(H5Item, self).data(role)
+
+    def is_junk(self):
+        p = self.parent()
+        if p is None:
+            return self.marked_junk
+        return self.marked_junk or p.is_junk()
 
 
 class H5ItemName(H5Item):
@@ -122,6 +128,9 @@ class H5AttrItem(QtGui.QStandardItem):
     def flags(self):
         return Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable
 
+    def is_junk(self):
+        return self.parent().is_junk()
+
 
 class H5AttrKey(H5AttrItem):
     def __init__(self, key, group, row):
@@ -176,12 +185,26 @@ class H5View(QtGui.QTreeView):
         collapse_action.triggered.connect(self.collapseAll)
         self.addAction(collapse_action)
 
-    def selected_path(self):
-        return self.model().itemFromIndex(self.selectedIndexes()[0]).fullname
+        mark_junk_action = QtGui.QAction("Mark Junk", self)
+        mark_junk_action.triggered.connect(self.mark_node_junk)
+        self.addAction(mark_junk_action)
+
+    def selected_items(self):
+        x = [self.model().itemFromIndex(i) for i in self.selectedIndexes() if i.column() == 0]
+        print x
+        return x
+
+    def mark_node_junk(self):
+        for i in self.selected_items():
+            i.group.attrs["__JUNK__"] = True
+            i.marked_junk = True
+        self.model().invalidateFilter()
+
 
 
 class RecursiveFilterModel(QtGui.QSortFilterProxyModel):
-    attrs_visible = True
+    attrs_visible = False
+    junk_visible = False
     term_string = ""
 
     def setSourceModel(self, model):
@@ -193,8 +216,12 @@ class RecursiveFilterModel(QtGui.QSortFilterProxyModel):
         return [i for i in items if t in i.fullname]
         #return self.sourceModel().findItems(t, Qt.MatchContains | Qt.MatchRecursive)
 
-    def toggle_attrs_visible(self):
-        self.attrs_visible = not self.attrs_visible
+    def toggle_attrs_visible(self, checked):
+        self.attrs_visible = checked
+        self.invalidateFilter()
+
+    def toggle_junk_visible(self, checked):
+        self.junk_visible = checked
         self.invalidateFilter()
 
     def source_model_changed(self):
@@ -231,7 +258,12 @@ class RecursiveFilterModel(QtGui.QSortFilterProxyModel):
         else:
             this_index = self.sourceModel().index(src_i, 0)
             this_item = self.sourceModel().itemFromIndex(this_index)
+        if not self.junk_visible and this_item.is_junk():
+            return False
         return this_item in self.matching_items
+
+    def itemFromIndex(self, idx):
+        return self.sourceModel().itemFromIndex(self.mapToSource(idx))
 
 class SearchableH5View(QtGui.QWidget):
     def __init__(self, model):
@@ -240,12 +272,8 @@ class SearchableH5View(QtGui.QWidget):
         match_model = RecursiveFilterModel()
         match_model.setSourceModel(model)
         match_model.set_match_term("")
-        self.attrs_visible_check = QCheckBox("Attributes Visible")
-        self.attrs_visible_check.setChecked(True)
         self.tree_view = H5View()
-        self.attrs_visible_check.toggled.connect(match_model.toggle_attrs_visible)
         self.tree_view.setModel(match_model)
-        layout.addWidget(self.attrs_visible_check)
         layout.addWidget(self.tree_view)
         self.search_box = QtGui.QLineEdit()
         layout.addWidget(self.search_box)
@@ -278,6 +306,18 @@ class H5Plotter(QtGui.QMainWindow):
         QtGui.QShortcut(QtGui.QKeySequence(Qt.CTRL | Qt.Key_B), self,
                         lambda: self.move_view_cursor(QtGui.QAbstractItemView.MoveLeft))
         QtGui.QShortcut(QtGui.QKeySequence(Qt.CTRL | Qt.Key_S), self, view_box.search_box.setFocus)
+
+        view_menu = self.menuBar().addMenu("View")
+
+        toggle_attrs_action = QtGui.QAction("Attributes Visible", view_menu)
+        toggle_attrs_action.setCheckable(True)
+        toggle_attrs_action.triggered.connect(self.match_model.toggle_attrs_visible)
+        view_menu.addAction(toggle_attrs_action)
+
+        toggle_junk_action = QtGui.QAction("Junk Visible", view_menu)
+        toggle_junk_action.setCheckable(True)
+        toggle_junk_action.triggered.connect(self.match_model.toggle_junk_visible)
+        view_menu.addAction(toggle_junk_action)
 
     def move_view_cursor(self, cursor_action):
         self.view.setFocus(Qt.OtherFocusReason)
