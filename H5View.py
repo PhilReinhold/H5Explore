@@ -1,3 +1,5 @@
+import logging
+import os
 from PyQt4 import QtGui
 from PyQt4.Qt import Qt
 import h5py
@@ -297,6 +299,8 @@ class H5Plotter(QtGui.QMainWindow):
         self.layout.setStretchFactor(0, 0)
         self.layout.setStretchFactor(1, 1)
 
+        self.setWindowIcon(QtGui.QIcon("icon.ico"))
+
         QtGui.QShortcut(QtGui.QKeySequence(Qt.CTRL | Qt.Key_N), self,
                         lambda: self.move_view_cursor(QtGui.QAbstractItemView.MoveDown))
         QtGui.QShortcut(QtGui.QKeySequence(Qt.CTRL | Qt.Key_P), self,
@@ -368,6 +372,15 @@ class H5Plotter(QtGui.QMainWindow):
 
 
 def main(fn):
+    if os.name == 'nt':
+        try:
+            import ctypes
+            myappid = 'philreinhold.h5view'
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+        except ImportError:
+            logging.warn("ctypes not found, appid not set")
+
+
     with h5py.File(fn) as f:
         app = QtGui.QApplication([])
         win = H5Plotter(f)
