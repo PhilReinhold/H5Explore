@@ -190,9 +190,12 @@ class H5View(QtGui.QTreeView):
         self.mark_junk_action.triggered.connect(self.mark_node_junk)
         self.addAction(self.mark_junk_action)
 
-        self.attach_axis_scale_action = QtGui.QAction("Attach Axis Scale", self)
-        self.attach_axis_scale_action.triggered.connect(self.attach_axis)
-        self.addAction(self.attach_axis_scale_action)
+        self.attach_x_axis_scale_action = QtGui.QAction("Attach X Axis Scale", self)
+        self.attach_y_axis_scale_action = QtGui.QAction("Attach Y Axis Scale", self)
+        self.attach_x_axis_scale_action.triggered.connect(self.attach_x_axis)
+        self.attach_y_axis_scale_action.triggered.connect(self.attach_y_axis)
+        self.addAction(self.attach_x_axis_scale_action)
+        self.addAction(self.attach_y_axis_scale_action)
 
     def selectionChanged(self, new_selection, old_selection):
         super(H5View, self).selectionChanged(new_selection, old_selection)
@@ -211,17 +214,26 @@ class H5View(QtGui.QTreeView):
         items = self.selected_items()
         print items
         self.mark_junk_action.setEnabled(False)
-        self.attach_axis_scale_action.setEnabled(False)
+        self.attach_x_axis_scale_action.setEnabled(False)
+        self.attach_y_axis_scale_action.setEnabled(False)
         if not items:
             return
         self.mark_junk_action.setEnabled(True)
         if len(items) == 1 and isinstance(items[0].group, h5py.Dataset):
-            self.attach_axis_scale_action.setEnabled(True)
+            self.attach_x_axis_scale_action.setEnabled(True)
+            if len(items[0].group.shape) > 1:
+                self.attach_y_axis_scale_action.setEnabled(True)
 
-    def attach_axis(self):
+    def attach_x_axis(self):
+        self.attach_axis(0)
+
+    def attach_y_axis(self):
+        self.attach_axis(1)
+
+    def attach_axis(self, axis_n):
         i = self.selected_items()[0]
         # Create widget to select x axis
-        m = AxisSelectionModel(self.model().sourceModel(), i)
+        m = AxisSelectionModel(self.model().sourceModel(), i, axis_n)
         w = QtGui.QTreeView()
         w.setModel(m)
         w.setSelectionMode(QtGui.QAbstractItemView.SingleSelection)
@@ -249,8 +261,8 @@ class H5View(QtGui.QTreeView):
                 return
 
             i.group.dims.create_scale(axis_item.group, axis_item.name)
-            i.group.dims[0].attach_scale(axis_item.group)
-            print 'Successfully attached'
+            i.group.dims[axis_n].attach_scale(axis_item.group)
+            print 'Successfully attached axis', axis_n
 
 class TreeFilterModel(QtGui.QSortFilterProxyModel):
     def __init__(self, **kwargs):
@@ -325,15 +337,15 @@ class RecursiveFilterModel(TreeFilterModel):
             return False
         return super(RecursiveFilterModel, self).filter_accepts_item(item)
 
+
 class AxisSelectionModel(TreeFilterModel):
-    def __init__(self, source_model, source):
+    def __init__(self, source_model, source, axis):
         super(AxisSelectionModel, self).__init__()
         self.setSourceModel(source_model)
         items = self.sourceModel().findItems("", Qt.MatchContains | Qt.MatchRecursive)
         groups = [i for i in items if isinstance(i, H5Item) and i is not source]
         datasets = [i for i in groups if isinstance(i.group, h5py.Dataset)]
-        self.set_matches([i for i in datasets if i.group.shape == source.group.shape])
-
+        self.set_matches([i for i in datasets if i.group.shape == (source.group.shape[axis],)])
 
 
 class SearchableH5View(QtGui.QWidget):
@@ -424,12 +436,24 @@ class H5Plotter(QtGui.QMainWindow):
     def make_dock(self, name, array, labels=None, axes=None):
         'returns a dockable plot widget'
         labels = {pos: l for l, pos in zip(labels, ('bottom', 'left'))}
-        if len(array.shape) == 3:
-            d = MoviePlotDock(array, name=name, area=self.dock_area)
-
-        if len(array.shape) == 2:
-            d = CrossSectionDock(name=name, area=self.dock_area)
-            d.setImage(array)
+        if len(array.shape) in (2, 3):
+            if len(array.shape) == 2:
+                d = CrossSectionDock(name=name, area=self.dock_area)
+            if len(array.shape) == 3:
+                d = MoviePlotDock(array, name=name, area=self.dock_area)
+            pos, scale = None, None
+            if axes is not None:
+                pos = [0, 0]
+                scale = [1, 1]
+                if axes[0] is not None:
+                    pos[0] = axes[0][0]
+                    scale[0] = axes[0][1] - axes[0][0]
+                if axes[1] is not None:
+                    pos[1] = axes[1][0]
+                    scale[1] = axes[1][1] - axes[1][0]
+            d.setImage(array, pos=pos, scale=scale)
+            if labels is not None:
+                d.setLabels(labels['bottom'], labels['left'], name)
 
         if len(array.shape) == 1:
             w = CrosshairPlotWidget(labels=labels)
@@ -478,6 +502,7 @@ def test():
     A.attrs['words'] = 'bonobo bonanza'
     A.attrs['number'] = 42
     C['Image Data'].attrs['dataset attr'] = 15.5
+    C['axis1'] = np.linspace(-10, 10, 50)
     ts, xs, ys = np.mgrid[0:100, -50:50, -50:50]
     rs = np.sqrt(xs ** 2 + ys ** 2)
     C['Movie Data'] = np.sinc(rs - ts) * np.exp(-ts / 100)
