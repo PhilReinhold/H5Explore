@@ -171,7 +171,6 @@ class H5AttrRow(object):
         self.value = H5AttrValue(key, dataset, self)
         self.columns = [self.name, self.value]
 
-
 class H5View(QtGui.QTreeView):
     def __init__(self):
         super(H5View, self).__init__()
@@ -179,22 +178,28 @@ class H5View(QtGui.QTreeView):
         self.setContextMenuPolicy(Qt.ActionsContextMenu)
         self.setSelectionMode(QtGui.QAbstractItemView.ExtendedSelection)
         self.setEditTriggers(QtGui.QAbstractItemView.EditKeyPressed)
-        expand_action = QtGui.QAction("Expand", self)
+        expand_action = QtGui.QAction("Expand All", self)
         expand_action.triggered.connect(self.expandAll)
         self.addAction(expand_action)
 
-        collapse_action = QtGui.QAction("Collapse", self)
+        collapse_action = QtGui.QAction("Collapse All", self)
         collapse_action.triggered.connect(self.collapseAll)
         self.addAction(collapse_action)
 
-        mark_junk_action = QtGui.QAction("Mark Junk", self)
-        mark_junk_action.triggered.connect(self.mark_node_junk)
-        self.addAction(mark_junk_action)
+        self.mark_junk_action = QtGui.QAction("Mark Junk", self)
+        self.mark_junk_action.triggered.connect(self.mark_node_junk)
+        self.addAction(self.mark_junk_action)
+
+        self.attach_axis_scale_action = QtGui.QAction("Attach Axis Scale", self)
+        self.attach_axis_scale_action.triggered.connect(self.attach_axis)
+        self.addAction(self.attach_axis_scale_action)
+
+    def selectionChanged(self, new_selection, old_selection):
+        super(H5View, self).selectionChanged(new_selection, old_selection)
+        self.set_valid_context_menu_actions()
 
     def selected_items(self):
-        x = [self.model().itemFromIndex(i) for i in self.selectedIndexes() if i.column() == 0]
-        print x
-        return x
+        return [self.model().itemFromIndex(i) for i in self.selectedIndexes() if i.column() == 0]
 
     def mark_node_junk(self):
         for i in self.selected_items():
@@ -202,9 +207,84 @@ class H5View(QtGui.QTreeView):
             i.marked_junk = True
         self.model().invalidateFilter()
 
+    def set_valid_context_menu_actions(self):
+        items = self.selected_items()
+        print items
+        self.mark_junk_action.setEnabled(False)
+        self.attach_axis_scale_action.setEnabled(False)
+        if not items:
+            return
+        self.mark_junk_action.setEnabled(True)
+        if len(items) == 1 and isinstance(items[0].group, h5py.Dataset):
+            self.attach_axis_scale_action.setEnabled(True)
+
+    def attach_axis(self):
+        i = self.selected_items()[0]
+        # Create widget to select x axis
+        m = AxisSelectionModel(self.model().sourceModel(), i)
+        w = QtGui.QTreeView()
+        w.setModel(m)
+        w.setSelectionMode(QtGui.QAbstractItemView.SingleSelection)
+
+        dialog = QtGui.QDialog()
+        button_box = QtGui.QDialogButtonBox(
+            QtGui.QDialogButtonBox.Ok |
+            QtGui.QDialogButtonBox.Cancel
+        )
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        layout = QtGui.QVBoxLayout(dialog)
+        layout.addWidget(QtGui.QLabel("Choose X Axis for Dataset {}".format(i.fullname)))
+        layout.addWidget(w)
+        layout.addWidget(button_box)
+        if dialog.exec_():
+            indices = w.selectedIndexes()
+            if not indices:
+                print 'Nothing selected'
+                return
+
+            axis_item = m.itemFromIndex(indices[0])
+            if not isinstance(axis_item.group, h5py.Dataset):
+                print 'Non-Dataset selected'
+                return
+
+            i.group.dims.create_scale(axis_item.group, axis_item.name)
+            i.group.dims[0].attach_scale(axis_item.group)
+            print 'Successfully attached'
+
+class TreeFilterModel(QtGui.QSortFilterProxyModel):
+    def __init__(self, **kwargs):
+        super(TreeFilterModel, self).__init__(**kwargs)
+        self.matching_items = []
+
+    def itemFromIndex(self, idx):
+        return self.sourceModel().itemFromIndex(self.mapToSource(idx))
+
+    def set_matches(self, matches):
+        matches = set(matches)
+        old_matches = None
+        root = self.sourceModel().invisibleRootItem()
+        while matches != old_matches:
+            old_matches = matches
+            matches = matches.union({i.parent() for i in old_matches})
+            matches = matches.difference({None, root})
+        self.matching_items = matches
+        self.invalidateFilter()
+
+    def filterAcceptsRow(self, src_i, src_parent_index):
+        this_parent = self.sourceModel().itemFromIndex(src_parent_index)
+        if this_parent:
+            this_item = this_parent.child(src_i)
+        else:
+            this_index = self.sourceModel().index(src_i, 0)
+            this_item = self.sourceModel().itemFromIndex(this_index)
+        return self.filter_accepts_item(this_item)
+
+    def filter_accepts_item(self, item):
+        return item in self.matching_items
 
 
-class RecursiveFilterModel(QtGui.QSortFilterProxyModel):
+class RecursiveFilterModel(TreeFilterModel):
     attrs_visible = False
     junk_visible = False
     term_string = ""
@@ -215,7 +295,9 @@ class RecursiveFilterModel(QtGui.QSortFilterProxyModel):
 
     def get_matches(self, t):
         items = self.sourceModel().findItems("", Qt.MatchContains | Qt.MatchRecursive)
-        return [i for i in items if t in i.fullname]
+        x = [i for i in items if t in i.fullname]
+        return x
+        #return [i for i in items if t in i.fullname]
         #return self.sourceModel().findItems(t, Qt.MatchContains | Qt.MatchRecursive)
 
     def toggle_attrs_visible(self, checked):
@@ -234,38 +316,25 @@ class RecursiveFilterModel(QtGui.QSortFilterProxyModel):
         self.term_string = term_string
         matches = [set(self.get_matches(t)) for t in str(term_string).split()]
         m0 = set(self.get_matches(""))
-        self.matching_items = m0.intersection(*matches)
+        self.set_matches(m0.intersection(*matches))
 
-        # Get Children of matched groups
-        #old_matches = None
-        #while self.matching_items != old_matches:
-        #    old_matches = self.matching_items
-        #    self.matching_items = self.matching_items.union(*[set(i.children()) for i in self.matching_items])
-
-        # Get Parents
-        old_matches = None
-        root = self.sourceModel().invisibleRootItem()
-        while self.matching_items != old_matches:
-            old_matches = self.matching_items
-            self.matching_items = self.matching_items.union({i.parent() for i in self.matching_items})
-            self.matching_items = self.matching_items.difference({None, root})
-        self.invalidateFilter()
-
-    def filterAcceptsRow(self, src_i, src_parent_index):
-        this_parent = self.sourceModel().itemFromIndex(src_parent_index)
-        if this_parent:
-            this_item = this_parent.child(src_i)
-            if not self.attrs_visible and isinstance(this_item, H5AttrItem):
-                return False
-        else:
-            this_index = self.sourceModel().index(src_i, 0)
-            this_item = self.sourceModel().itemFromIndex(this_index)
-        if not self.junk_visible and this_item.is_junk():
+    def filter_accepts_item(self, item):
+        if not self.attrs_visible and isinstance(item, H5AttrItem):
             return False
-        return this_item in self.matching_items
+        if not self.junk_visible and item.is_junk():
+            return False
+        return super(RecursiveFilterModel, self).filter_accepts_item(item)
 
-    def itemFromIndex(self, idx):
-        return self.sourceModel().itemFromIndex(self.mapToSource(idx))
+class AxisSelectionModel(TreeFilterModel):
+    def __init__(self, source_model, source):
+        super(AxisSelectionModel, self).__init__()
+        self.setSourceModel(source_model)
+        items = self.sourceModel().findItems("", Qt.MatchContains | Qt.MatchRecursive)
+        groups = [i for i in items if isinstance(i, H5Item) and i is not source]
+        datasets = [i for i in groups if isinstance(i.group, h5py.Dataset)]
+        self.set_matches([i for i in datasets if i.group.shape == source.group.shape])
+
+
 
 class SearchableH5View(QtGui.QWidget):
     def __init__(self, model):
@@ -344,6 +413,8 @@ class H5Plotter(QtGui.QMainWindow):
                     print 'Could not find axis in item', item
                     labels.append('')
                     axes.append(None)
+                except RuntimeError:
+                    print 'Mac bug? Probably no axis available'
 
             dock = self.make_dock(item.name, item.group[:], labels, axes)
             self.dock_area.addDock(dock)
@@ -413,8 +484,8 @@ def test():
 
     xs = A['xs'] = np.linspace(0, 10, 300)
     A['sin(xs)'] = np.sin(xs)
-    A['sin(xs)'].dims.create_scale(A['xs'], "The X Axis Label")
-    A['sin(xs)'].dims[0].attach_scale(A['xs'])
+    #A['sin(xs)'].dims.create_scale(A['xs'], "The X Axis Label")
+    #A['sin(xs)'].dims[0].attach_scale(A['xs'])
     main(test_fn)
 
 
