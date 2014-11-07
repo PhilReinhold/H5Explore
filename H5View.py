@@ -4,6 +4,7 @@ from PyQt4 import QtGui
 from PyQt4.Qt import Qt
 import h5py
 from pyqtgraph.dockarea import DockArea
+import re
 from plot_widgets import CrosshairPlotWidget, CloseableDock, CrossSectionDock, MoviePlotDock
 
 from scipy.stats import futil
@@ -295,6 +296,17 @@ class TreeFilterModel(QtGui.QSortFilterProxyModel):
     def filter_accepts_item(self, item):
         return item in self.matching_items
 
+    def lessThan(self, idx_1, idx_2):
+        item_1 = self.sourceModel().itemFromIndex(idx_1)
+        item_2 = self.sourceModel().itemFromIndex(idx_2)
+        return natural_keys(item_1.name) < natural_keys(item_2.name)
+
+def atoi(text):
+    return int(text) if text.isdigit() else text
+
+def natural_keys(text):
+    'http://nedbatchelder.com/blog/200712/human_sorting.html'
+    return [ atoi(c) for c in re.split('(\d+)', text) ]
 
 class RecursiveFilterModel(TreeFilterModel):
     attrs_visible = False
@@ -346,6 +358,7 @@ class AxisSelectionModel(TreeFilterModel):
         groups = [i for i in items if isinstance(i, H5Item) and i is not source]
         datasets = [i for i in groups if isinstance(i.group, h5py.Dataset)]
         self.set_matches([i for i in datasets if i.group.shape == (source.group.shape[axis],)])
+        self.sort(0)
 
 
 class SearchableH5View(QtGui.QWidget):
@@ -355,6 +368,7 @@ class SearchableH5View(QtGui.QWidget):
         match_model = RecursiveFilterModel()
         match_model.setSourceModel(model)
         match_model.set_match_term("")
+        match_model.sort(0)
         self.tree_view = H5View()
         self.tree_view.setModel(match_model)
         layout.addWidget(self.tree_view)
@@ -491,9 +505,9 @@ def test():
 
     test_fn = "test.h5"
     test_f = h5py.File(test_fn, 'w')
-    A = test_f.create_group('group A')
-    B = test_f.create_group('group B')
-    C = test_f.create_group('group C')
+    A = test_f.create_group('group A1')
+    B = test_f.create_group('group A2')
+    C = test_f.create_group('group A11')
     B['Simple Data'] = range(25)
     xs, ys = np.mgrid[-25:25, -25:25]
     rs = np.sqrt(xs ** 2 + ys ** 2)
